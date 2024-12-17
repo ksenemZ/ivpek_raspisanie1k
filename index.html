@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Group Schedule Viewer</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/docxtemplater/3.28.1/docxtemplater.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <div class="theme-toggle-container">
+            <button id="theme-toggle">Светлая/Тёмная</button>
+        </div>
+        <h1>Расписание: 1 корпус.</h1>
+        <div class="file-buttons" id="file-buttons"></div>
+        <div id="loading" class="loading" style="display: none;">Просматриваем существующее расписание...</div>
+        <div id="error" class="error" style="display: none;"></div>
+        <div class="group-select-container" id="group-select-container" style="display: none;">
+            <label for="group-select">Выберите группу:</label>
+            <select id="group-select">
+                <option value="">-- Выберите группу --</option>
+            </select>
+        </div>
+        <div class="schedule-box" id="schedule-box"></div>
+    </div>
+
+    <script>
+        const fileButtonsContainer = document.getElementById('file-buttons');
+        const loadingMessage = document.getElementById('loading');
+        const errorMessage = document.getElementById('error');
+        const groupSelectContainer = document.getElementById('group-select-container');
+        const groupSelect = document.getElementById('group-select');
+        const scheduleBox = document.getElementById('schedule-box');
+
+        let scheduleData = {}; // Object to store schedules grouped by group name
+        let xlsxFiles = []; // Array to store the list of .xlsx files
+        
+        const proxyUrl = "https://cors-anywhere.herokuapp.com/"; // Free proxy service
+        // Public Yandex.Disk URL
+        const yandexDiskUrl = 'https://disk.yandex.ru/d/dFUTahZmsxGDlw';
+
+        // Automatically fetch the schedule when the page loads
+        document.addEventListener('DOMContentLoaded', async () => {
+            try {
+                // Show loading message
+                loadingMessage.style.display = 'block';
+
+                // Fetch the root folder contents
+                const rootFolderContents = await fetchYandexDiskFolder(yandexDiskUrl);
+
+                // Find the '1 корпус' folder
+                const oneKorpusFolder = rootFolderContents._embedded.items.find(item => item.name === '1 корпус');
+                if (!oneKorpusFolder) {
+                    throw new Error("Folder '1 корпус' not found.");
+                }
+
+                // Fetch the contents of the '1 корпус' folder using its path
+                const oneKorpusFolderPath = oneKorpusFolder.path; // Get the path of the '1 корпус' folder
+                const oneKorpusFolderContents = await fetchYandexDiskFolder(yandexDiskUrl, oneKorpusFolderPath);
+
+                // Extract the .xlsx files from the '1 корпус' folder
+                xlsxFiles = extractXlsxFiles(oneKorpusFolderContents);
+
+                // Create buttons for each .xlsx file
+                populateFileButtons(xlsxFiles);
+
+                // Hide loading message
+                loadingMessage.style.display = 'none';
+            } catch (error) {
+                // Show error message
+                errorMessage.textContent = `Error fetching the folder contents: ${error.message}`;
+                errorMessage.style.display = 'block';
+                loadingMessage.style.display = 'none';
+            }
+        });
+
+        // Function to fetch the contents of a Yandex.Disk folder
+        async function fetchYandexDiskFolder(publicUrl, path = '') {
+            // Construct the Yandex.Disk API URL
+            const apiUrl = `https://cloud-api.yandex.net/v1/disk/public/resources?public_key=${publicUrl}&path=${encodeURIComponent(path)}`;
+
+            // Fetch the folder contents using the API
+            const response = await fetch(apiUrl);
+            if (!response.ok) {
+                throw new Error(`Failed to fetch Yandex.Disk folder: ${response.statusText}`);
+            }
+            const data = await response.json();
+            return data;
+        }
+
+        // Function to extract .xlsx files from the folder contents
+        function extractXlsxFiles(folderContents) {
+            const xlsxFiles = [];
+
+            // Access the nested 'items' array inside '_embedded'
+            const items = folderContents._embedded.items;
+
+            for (const item of items) {
+                if (item.type === 'file' && item.name.endsWith('.xlsx')) {
+                    xlsxFiles.push({
+                        name: item.name,
+                        url: item.file
+                    });
+                }
+            }
+            return xlsxFiles;
+        }
+
+        // Function to create buttons for each .xlsx file
+        function populateFileButtons(files) {
+            fileButtonsContainer.innerHTML = ''; // Clear existing buttons
+
+            files.forEach(file => {
+                const button = document.createElement('button');
+                button.textContent = file.name;
+                button.dataset.url = file.url; // Store the file URL in the button's dataset
+                button.addEventListener('click', () => parseSelectedFile(file.url));
+                fileButtonsContainer.appendChild(button);
+            });
+        }
+
+        // Function to fetch and parse the selected .xlsx file
+        async function parseSelectedFile(fileUrl) {
+            try {
+                // Show loading message
+                loadingMessage.style.display = 'block';
+                loadingMessage.textContent = 'Смотрим расписание...';
+
+                const fileData = await fetchFile(fileUrl);
+                const workbook = XLSX.read(fileData, { type: 'array' });
+                const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+                const jsonData = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
+                parseSchedule(jsonData);
+
+                console.log("Final Schedule Data:", scheduleData);
+
+                // Populate the group dropdown
+                populateGroupSelect();
+
+                // Show the group select container
+                groupSelectContainer.style.display = 'block';
+
+                // Hide loading message
+                loadingMessage.style.display = 'none';
+            } catch (error) {
+                // Show error message
+                errorMessage.textContent = `Error parsing the file: ${error.message}`;
+                errorMessage.style.display = 'block';
+                loadingMessage.style.display = 'none';
+            }
+        }
+
+        // Function to fetch a file from a URL
+        async function fetchFile(url) {
+            const response = await fetch(proxyUrl + url);
+            if (!response.ok) {
+                throw new Error(`Failed to fetch file: ${response.statusText}`);
+            }
+            const buffer = await response.arrayBuffer();
+            return new Uint8Array(buffer);
+        }
+
+        // Function to parse the schedule
+        function parseSchedule(data) {
+            const groupList = [
+                "109", "120", "205", "206", "207", "207а", "208", "209",
+                "201", "221", "222", "223", "305", "306", "306а", "307",
+                "307а", "308", "309", "321", "322", "405", "406", "406а",
+                "407", "407а", "408", "421"
+            ];
+
+            // Reset scheduleData before parsing a new file
+            scheduleData = {};
+
+            // Initialize scheduleData for all groups
+            groupList.forEach(group => {
+                scheduleData[group] = [];
+            });
+
+            // Define the rows where groups are listed
+            const groupRows = [13, 20, 27, 34]; // Rows 13, 20, 27, 34
+
+            // Iterate through rows
+            for (let i = 0; i < data.length; i++) {
+                const row = data[i];
+                console.log(`Inspecting Row ${i}:`, row);
+
+                // Check if the current row is a group row
+                if (groupRows.includes(i + 1)) { // Adjust for 0-based index
+                    // Map groups to their columns
+                    const groupsInRow = {};
+                    for (let j = 2; j < row.length; j += 2) { // Start from column C (index 2) and skip 2 columns
+                        const group = row[j]?.toString().trim();
+                        if (group && groupList.includes(group)) {
+                            groupsInRow[group] = {
+                                subjectColumn: j, // Subject is in the current column
+                                roomColumn: j + 1 // Room is in the next column
+                            };
+                        }
+                    }
+
+                    // Iterate through the schedule rows (next rows until the next group row)
+                    for (let k = i + 1; k < data.length && !groupRows.includes(k + 1); k++) {
+                        const scheduleRow = data[k];
+                        const time = scheduleRow[1]?.toString().trim(); // Time is always in column B (index 1)
+
+                        // Extract schedule data for each group
+                        for (const group in groupsInRow) {
+                            const { subjectColumn, roomColumn } = groupsInRow[group];
+                            const subjectAndTeacher = scheduleRow[subjectColumn]?.toString().trim();
+                            const room = scheduleRow[roomColumn]?.toString().trim();
+
+                            if (time && subjectAndTeacher && room) {
+                                scheduleData[group].push({
+                                    time: time,
+                                    subjectAndTeacher: subjectAndTeacher,
+                                    room: room
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Function to populate the group dropdown
+        function populateGroupSelect() {
+            groupSelect.innerHTML = '<option value="">-- Выберите группу --</option>';
+
+            const groups = Object.keys(scheduleData);
+            groups.forEach(group => {
+                const option = document.createElement('option');
+                option.value = group;
+                option.textContent = group;
+                groupSelect.appendChild(option);
+            });
+
+            // Add event listener to the group select
+            groupSelect.addEventListener('change', () => displaySchedule(groupSelect.value));
+        }
+
+        // Function to display the schedule for a selected group
+        function displaySchedule(group) {
+            scheduleBox.innerHTML = '';
+            if (scheduleData[group]) {
+                scheduleData[group].forEach(entry => {
+                    const scheduleEntry = document.createElement('div');
+                    scheduleEntry.className = 'schedule-entry';
+                    scheduleEntry.innerHTML = `
+                        <h3>${entry.time}</h3>
+                        <p><strong>Предмет & Учитель:</strong> ${entry.subjectAndTeacher}</p>
+                        <p><strong>Кабинет:</strong> ${entry.room}</p>
+                    `;
+                    scheduleBox.appendChild(scheduleEntry);
+                });
+            }
+        }
+
+        // Theme Toggle Functionality
+        const themeToggle = document.getElementById('theme-toggle');
+        const container = document.querySelector('.container'); // Select the container
+        themeToggle.addEventListener('click', toggleTheme);
+
+        function toggleTheme() {
+            const body = document.body;
+            body.classList.toggle('dark-theme');
+            container.classList.toggle('dark-theme');
+        }
+    </script>
+</body>
+</html>
