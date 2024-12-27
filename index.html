@@ -6,9 +6,6 @@
     <title>Group Schedule Viewer</title>
     <link rel="stylesheet" href="styles.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/docxtemplater/3.28.1/docxtemplater.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 </head>
 <body>
     <div class="container">
@@ -214,11 +211,11 @@
                             const subjectAndTeacher = scheduleRow[subjectColumn]?.toString().trim();
                             const room = scheduleRow[roomColumn]?.toString().trim();
 
-                            if (time && subjectAndTeacher && room) {
+                            if (time && subjectAndTeacher) {
                                 scheduleData[group].push({
                                     time: time,
                                     subjectAndTeacher: subjectAndTeacher,
-                                    room: room
+                                    room: room || 'Нет кабинета'
                                 });
                             }
                         }
@@ -250,10 +247,31 @@
                 scheduleData[group].forEach(entry => {
                     const scheduleEntry = document.createElement('div');
                     scheduleEntry.className = 'schedule-entry';
+
+                    // Add an icon for special schedules
+                    let icon = '';
+                    if (entry.subjectAndTeacher.includes('Каникулы')) {
+                        icon = '<span class="special-icon">🏖️</span>'; // Beach umbrella for holidays
+                    } else if (entry.subjectAndTeacher.includes('Сессия')) {
+                        icon = '<span class="special-icon">📚</span>'; // Books for sessions
+                    } else if (entry.subjectAndTeacher.includes('практика' || 'ПП' || 'УП')) {
+                        icon = '<span class="special-icon">🛠️</span>'; // Hammer and wrench for practices
+                    }
+
+                    const isSpecialSchedule = entry.subjectAndTeacher.includes('Каникулы') || 
+                                     entry.subjectAndTeacher.includes('Сессия') || 
+                                     entry.subjectAndTeacher.includes('практика' || 'ПП' || 'УП');
+
+                    // Add a blinking "!" icon if it's a special schedule
+                    let warningIcon = '';
+                    if (isSpecialSchedule) {
+                        warningIcon = '<span class="warning-icon" title="Особое расписание (каникулы, сессия, практика)">!</span>';
+                    }
+
                     scheduleEntry.innerHTML = `
-                        <h3>${entry.time}</h3>
+                        <h3>${entry.time} ${icon} ${warningIcon}</h3>
                         <p><strong>Предмет & Учитель:</strong> ${entry.subjectAndTeacher}</p>
-                        <p><strong>Кабинет:</strong> ${entry.room}</p>
+                        <p><strong>Кабинет:</strong> ${entry.room || 'Нет кабинета'}</p>
                     `;
                     scheduleBox.appendChild(scheduleEntry);
                 });
